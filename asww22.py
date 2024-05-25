@@ -32,19 +32,16 @@ def read_subdomains(file):
         msg = f"An error occurred while reading the file: {e}"
         log_output(msg)
         return []
-
 class RetryableHTTPError(requests.RequestException):
     pass
-
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10),
        retry=(retry_if_exception_type(RetryableHTTPError) | retry_if_exception_type(requests.ConnectionError)))
 def get_response(subdomain):
     response = requests.get(f'http://{subdomain}', timeout=5)
     if response.status_code in [503]:
         raise RetryableHTTPError(f"Server error: {response.status_code} for url: {response.url}")
-    response.raise_for_status()  # Raise an HTTPError for bad responses
+    response.raise_for_status() 
     return response
-
 def categorize_js_files(js_files, subdomain):
     internal_js = []
     external_js = []
@@ -54,7 +51,6 @@ def categorize_js_files(js_files, subdomain):
         else:
             external_js.append(js_file)
     return internal_js, external_js
-
 def find_js_files(subdomain):
     try:
         response = get_response(subdomain)
@@ -65,7 +61,6 @@ def find_js_files(subdomain):
         return []
     except RetryError:
         return []
-
 def get_technologies(subdomain):
     try:
         tech_info = builtwith.builtwith(f'http://{subdomain}')
@@ -74,13 +69,11 @@ def get_technologies(subdomain):
         msg = f"Error fetching technologies for {subdomain}: {e}"
         log_output(msg)
         return {}
-
 def process_subdomain(subdomain):
     try:
         js_files = find_js_files(subdomain)
         if not js_files:
-            return  # Skip printing and logging for subdomains with no JS files
-
+            return 
         tech_info = get_technologies(subdomain)
 
         if tech_info:
