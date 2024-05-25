@@ -7,9 +7,33 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 from datetime import datetime
 from urllib.parse import urlparse
 import builtwith
-
-# Initialize colorama
+import json
+import os
 init(autoreset=True)
+RETIRE_JS_URL = "https://raw.githubusercontent.com/RetireJS/retire.js/master/repository/jsrepository.json"
+def download_retirejs_db():
+    try:
+        print(Fore.YELLOW + "Downloading Retire.js database...")
+        response = requests.get(RETIRE_JS_URL)
+        response.raise_for_status()
+        with open('retirejs.json', 'wb') as f:
+            f.write(response.content)
+        print(Fore.GREEN + "Retire.js database downloaded successfully.")
+    except Exception as e:
+        print(Fore.RED + f"Error downloading Retire.js database: {e}")
+        
+def load_vulnerable_js_db():
+    if not os.path.exists('retirejs.json'):
+        download_retirejs_db()
+    try:
+        with open('retirejs.json', 'r') as f:
+            retirejs_db = json.load(f)
+        return retirejs_db
+    except Exception as e:
+        print(Fore.RED + f"Error loading Retire.js database: {e}")
+        return {}
+
+vulnerable_js_db = load_vulnerable_js_db()
 
 def log_output(message):
     if log_file:
@@ -32,8 +56,10 @@ def read_subdomains(file):
         msg = f"An error occurred while reading the file: {e}"
         log_output(msg)
         return []
+
 class RetryableHTTPError(requests.RequestException):
     pass
+
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10),
        retry=(retry_if_exception_type(RetryableHTTPError) | retry_if_exception_type(requests.ConnectionError)))
 def get_response(subdomain):
@@ -42,6 +68,7 @@ def get_response(subdomain):
         raise RetryableHTTPError(f"Server error: {response.status_code} for url: {response.url}")
     response.raise_for_status() 
     return response
+
 def categorize_js_files(js_files, subdomain):
     internal_js = []
     external_js = []
@@ -51,6 +78,7 @@ def categorize_js_files(js_files, subdomain):
         else:
             external_js.append(js_file)
     return internal_js, external_js
+
 def find_js_files(subdomain):
     try:
         response = get_response(subdomain)
@@ -61,6 +89,7 @@ def find_js_files(subdomain):
         return []
     except RetryError:
         return []
+
 def get_technologies(subdomain):
     try:
         tech_info = builtwith.builtwith(f'http://{subdomain}')
@@ -69,11 +98,20 @@ def get_technologies(subdomain):
         msg = f"Error fetching technologies for {subdomain}: {e}"
         log_output(msg)
         return {}
+
+def check_vulnerable_js(js_file):
+    for library, data in vulnerable_js_db.items():
+        for vulnerability in data.get('vulnerabilities', []):
+            if vulnerability.get('below') in js_file:
+                return library, vulnerability.get('below'), vulnerability.get('identifiers', {}).get('summary', 'No description available.')
+    return None
+
 def process_subdomain(subdomain):
     try:
         js_files = find_js_files(subdomain)
         if not js_files:
             return 
+
         tech_info = get_technologies(subdomain)
 
         if tech_info:
@@ -95,6 +133,11 @@ def process_subdomain(subdomain):
                     file_msg = f"{Fore.BLUE}{js_file}{Fore.RESET}"
                     print(file_msg)
                     log_output(js_file)
+                    vulnerability = check_vulnerable_js(js_file)
+                    if vulnerability:
+                        vuln_msg = f"{Fore.RED}Vulnerable JS detected: {vulnerability[0]} version {vulnerability[1]} - {vulnerability[2]}{Fore.RESET}"
+                        print(vuln_msg)
+                        log_output(vuln_msg)
 
             if external_js:
                 msg = f"\n{Fore.GREEN}External JavaScript files found in {subdomain}:{Fore.RESET}"
@@ -105,6 +148,13 @@ def process_subdomain(subdomain):
                     print(file_msg)
                     log_output(js_file)
 
+                    # Check for vulnerabilities
+                    vulnerability = check_vulnerable_js(js_file)
+                    if vulnerability:
+                        vuln_msg = f"{Fore.RED}Vulnerable JS detected: {vulnerability[0]} version {vulnerability[1]} - {vulnerability[2]}{Fore.RESET}"
+                        print(vuln_msg)
+                        log_output(vuln_msg)
+
     except Exception as e:
         msg = f"Unexpected error processing {subdomain}: {e}"
         log_output(msg)
@@ -113,7 +163,7 @@ def main():
     global log_file
     log_file = None
 
-    parser = argparse.ArgumentParser(description='Find JavaScript files in subdomains and gather technology stack information.')
+    parser = argparse.ArgumentParser(description='Find JavaScript files in subdomains, gather technology stack information, and check for vulnerable JavaScript libraries.')
     parser.add_argument('--domain', type=str, help='Specify a single domain to check.')
     parser.add_argument('--file', type=str, default='subdomains.txt', help='File containing list of subdomains to check.')
     parser.add_argument('--output', type=str, help='File to save the output.')
