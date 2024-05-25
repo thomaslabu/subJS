@@ -1,6 +1,3 @@
-Sure! Here's a detailed README for the `subJS` script:
-
----
 
 # subJS
 
